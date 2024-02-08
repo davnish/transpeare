@@ -1,0 +1,13 @@
+name: point_cloud
+channels:
+  - defaults
+dependencies:
+  - pytorch
+  - torchaudio
+  - torchvision
+  - anaconda::jupyter
+  - anaconda::scikit-learn
+  - conda-forge::matplotlib
+  - anaconda::h5py
+  - python=3.11
+prefix: /Users/nischalsingh/miniconda3/envs/point_cloud

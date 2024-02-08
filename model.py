@@ -67,12 +67,16 @@ class BigramLanguageModel(nn.Module): # A simple Bigram model.
     def __init__(self):
         super(BigramLanguageModel, self).__init__() 
         # Creating a embedding table here (a learnable parameter)
-        self.token_embedding_table = nn.Embedding(vocab_size, n_embd) 
+        self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
+        self.position_embedding_table = nn.Embedding(block_size, n_embd) 
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx, targets= None): # This function just operate like __call__
+        B, T = idx.shape
         tok_emb = self.token_embedding_table(idx) # (Batch, Time, Channels) (4, 8(block_size), 65(vocab_size))
-        logits = self.lm_head(tok_emb) #(B, T, Vocab_size)
+        pos_emb = self.position_embedding_table(torch.arange(T), device = device)
+        x = tok_emb + pos_emb # Adding Position Embedidng
+        logits = self.lm_head(x) #(B, T, Vocab_size)
         if targets is None:
             loss = None
         else:
