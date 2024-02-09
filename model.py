@@ -10,6 +10,7 @@ max_iters = 500
 eval_iters = 20
 eval_interval = 50
 n_embd = 32
+learning_rate = 1e-3
 device = 'mps' if torch.backends.mps.is_available() else 'cpu'
 
 #--------------------
@@ -61,6 +62,62 @@ def estimate_loss():
     model.train()
     return out
 
+class MultiHeadedAttention(nn.Module):
+    
+    def __init__(self, num_heads, head_size):
+        super().__init__()
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+    
+    def forward(self, x):
+        return torch.cat([h(x) for h in self.heads], dim = -1)
+
+class FeedForward(nn.Module):
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, n_embd),
+            nn.ReLU(),
+        )
+    def forward(self, x):
+        return self.net(x)
+    
+
+
+## One Head Attention
+class Head(nn.Module):
+    def __init__(self, head_size):
+        super().__init__()
+        self.key = nn.Linear(n_embd, head_size, bias = False)
+        self.query = nn.Linear(n_embd, head_size, bias = False)
+        self.value = nn.Linear(n_embd, head_size, bias = False)
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size))) # Registering the tril parameters as not a learnable parameter
+        #https://discuss.pytorch.org/t/what-is-the-difference-between-register-buffer-and-register-parameter-of-nn-module/32723 see this.
+
+    def forward(self, x):
+        B, T, C = x.shape
+        k = self.key(x) # (B,T,C(head_size))
+        q = self.query(x) #(B, T, C(head_size))
+
+        wei = q @ k.transpose(-2, -1) * C ** -0.5 # (B,T,C) --> (B, C, T) Shape_output: (B,T,T)
+        wei = wei.masked_fill(self.tril[:T, :T]==0, float('-inf')) # (B,T,T)
+        wei = F.softmax(wei, dim = -1)
+
+        # value operation
+        v = self.key(x) # (B, T, C(head_size))
+        out = wei @ v
+        return out
+    
+class Block(nn.Module):
+    def __init__(self, n_embd, n_heads):
+        super().__init__()
+        head_size = n_embd // n_heads
+        self.sa = MultiHeadedAttention(n_heads, head_size)
+        self.ffwd = FeedForward(n_embd)
+    
+    def forward(self, x):
+        x = x+self.sa(x)
+        x = x+self.ffwd(x)
+        return x
 
 class BigramLanguageModel(nn.Module): # A simple Bigram model.
 
@@ -69,14 +126,26 @@ class BigramLanguageModel(nn.Module): # A simple Bigram model.
         # Creating a embedding table here (a learnable parameter)
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd) 
+        self.blocks = nn.Sequential(
+            Block(n_embd, n_heads=4),
+            Block(n_embd, n_heads=4),
+            Block(n_embd, n_heads=4),
+        )
+
+        # self.sa_head = MultiHeadedAttention(4, 8)
+        # self.ffwd = FeedForward(n_embd)
+        
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx, targets= None): # This function just operate like __call__
         B, T = idx.shape
-        tok_emb = self.token_embedding_table(idx) # (Batch, Time, Channels) (4, 8(block_size), 65(vocab_size))
-        pos_emb = self.position_embedding_table(torch.arange(T), device = device)
-        x = tok_emb + pos_emb # Adding Position Embedidng
-        logits = self.lm_head(x) #(B, T, Vocab_size)
+        tok_emb = self.token_embedding_table(idx) # (Batch, Time, Channels) (4, 8(block_size), 32(embd_size)))
+        pos_emb = self.position_embedding_table(torch.arange(T,  device = device))
+        x = tok_emb + pos_emb # Adding Position Embedidng        
+
+        x = self.blocks(x)
+            
+        logits = self.lm_head(x) # (B, T, Vocab_size)
         if targets is None:
             loss = None
         else:
@@ -89,7 +158,11 @@ class BigramLanguageModel(nn.Module): # A simple Bigram model.
 
     def generate(self, idx, max_new_tokens): # With the help of this function we will predict the next character
         for _ in range(max_new_tokens):
-            logits, loss = self(idx)
+            
+            idx_cond = idx[:, -block_size:] # the attention can be calculated till the block_size
+
+            logits,_ = self(idx_cond)
+
             logits = logits[:,-1,:] # extracting the last character from the embedding this will of the shape (B, 65). so to predict its next element
             prob = F.softmax(logits, dim = -1)
             idx_next = torch.multinomial(prob, num_samples = 1) # (B,1)
@@ -102,7 +175,7 @@ m = model.to(device)
 
 
 # Optimizer
-optimizer = torch.optim.Adam(model.parameters(), lr = 1e-3)
+optimizer = torch.optim.Adam(model.parameters(), learning_rate)
 
 for iter in range(max_iters):
     if iter % eval_interval == 0:
@@ -110,7 +183,7 @@ for iter in range(max_iters):
         print(f"for step: {iter} train loss {losses['train']:.4f}, val_loss {losses['val']:.4f}")
 
     xb, yb = get_batch('train')
-    logits, loss = m(xb,yb) #This will calculate loss for every
+    logits, loss = model(xb,yb) #This will calculate loss for every
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
