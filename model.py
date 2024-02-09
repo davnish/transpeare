@@ -4,13 +4,16 @@ from torch.nn import functional as F
 
 # Hyperparameter----
 
-batch_size = 32
-block_size = 8
-max_iters = 500
-eval_iters = 20
-eval_interval = 50
-n_embd = 32
-learning_rate = 1e-3
+batch_size = 64
+block_size = 256
+max_iters = 5000
+eval_interval = 500
+eval_iters = 200
+n_embd = 384
+learning_rate = 3e-4
+n_heads = 6
+n_layer = 6
+dropout = 0.2
 device = 'mps' if torch.backends.mps.is_available() else 'cpu'
 
 #--------------------
@@ -67,16 +70,24 @@ class MultiHeadedAttention(nn.Module):
     def __init__(self, num_heads, head_size):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.proj = nn.Linear(n_embd, n_embd)
+        self.dropout = nn.Dropout(dropout)
+
     
     def forward(self, x):
-        return torch.cat([h(x) for h in self.heads], dim = -1)
+        out = torch.cat([h(x) for h in self.heads], dim = -1)
+        out = self.dropout(self.proj(out))
+        return out
+        
 
 class FeedForward(nn.Module):
     def __init__(self, n_embd):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_embd, n_embd),
+            nn.Linear(n_embd, 4*n_embd),
             nn.ReLU(),
+            nn.Linear(4*n_embd, n_embd),
+            nn.Dropout(dropout)
         )
     def forward(self, x):
         return self.net(x)
@@ -92,7 +103,7 @@ class Head(nn.Module):
         self.value = nn.Linear(n_embd, head_size, bias = False)
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size))) # Registering the tril parameters as not a learnable parameter
         #https://discuss.pytorch.org/t/what-is-the-difference-between-register-buffer-and-register-parameter-of-nn-module/32723 see this.
-
+        self.dropout = nn.Dropout(dropout)
     def forward(self, x):
         B, T, C = x.shape
         k = self.key(x) # (B,T,C(head_size))
@@ -101,7 +112,7 @@ class Head(nn.Module):
         wei = q @ k.transpose(-2, -1) * C ** -0.5 # (B,T,C) --> (B, C, T) Shape_output: (B,T,T)
         wei = wei.masked_fill(self.tril[:T, :T]==0, float('-inf')) # (B,T,T)
         wei = F.softmax(wei, dim = -1)
-
+        wei = self.dropout(wei)
         # value operation
         v = self.key(x) # (B, T, C(head_size))
         out = wei @ v
@@ -113,10 +124,12 @@ class Block(nn.Module):
         head_size = n_embd // n_heads
         self.sa = MultiHeadedAttention(n_heads, head_size)
         self.ffwd = FeedForward(n_embd)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
     
     def forward(self, x):
-        x = x+self.sa(x)
-        x = x+self.ffwd(x)
+        x = x+self.sa(self.ln1(x))
+        x = x+self.ffwd(self.ln2(x))
         return x
 
 class BigramLanguageModel(nn.Module): # A simple Bigram model.
@@ -126,11 +139,7 @@ class BigramLanguageModel(nn.Module): # A simple Bigram model.
         # Creating a embedding table here (a learnable parameter)
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd) 
-        self.blocks = nn.Sequential(
-            Block(n_embd, n_heads=4),
-            Block(n_embd, n_heads=4),
-            Block(n_embd, n_heads=4),
-        )
+        self.blocks = nn.Sequential(*[Block(n_embd, n_heads=n_heads) for _ in range(n_layer)])
 
         # self.sa_head = MultiHeadedAttention(4, 8)
         # self.ffwd = FeedForward(n_embd)
