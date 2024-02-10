@@ -15,7 +15,7 @@ learning_rate = 3e-4
 n_heads = 6
 n_layer = 6
 dropout = 0.2
-device = 'mps' if torch.backends.mps.is_available() else 'cpu'
+device = 'cuda.' if torch.cuda.is_available() else 'cpu'
 
 #--------------------
 
@@ -140,9 +140,6 @@ class BigramLanguageModel(nn.Module): # A simple Bigram model.
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd) 
         self.blocks = nn.Sequential(*[Block(n_embd, n_heads=n_heads) for _ in range(n_layer)])
-
-        # self.sa_head = MultiHeadedAttention(4, 8)
-        # self.ffwd = FeedForward(n_embd)
         
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
@@ -178,7 +175,7 @@ class BigramLanguageModel(nn.Module): # A simple Bigram model.
             idx = torch.cat((idx, idx_next), dim = 1) # (B, T+1)
         return idx
         
-f
+
 if load_model == True:
     model = torch.load('modelv1.pt')
     model.eval()
