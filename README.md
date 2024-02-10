@@ -12,8 +12,8 @@ This is a character level model. And contrary to the typical architecture of the
 The model starts with class `BigramLanguageModel` it then calls the class `Blocks` which is used to make multiple copies of the middle block as you cna see in the above diagram; with one `masked_multi_headed_attention` and one `feed_forward` and two `layer_norms`, The Nx in the diagram signifies that. each `Block` calls for the `MultiHeadedAttention`  and each multi_head class the `Head` class which calculates the attention for the single head. There is a `estimate_loss` class which calculates the `loss` and `val_loss` after every `eval_intervals`. 
 
 ## Output
-```
 This is an example output from the model.
+```
 Upon his softice and treasons from which cark,
 Coming that let him good words and brood
 As if he scarce this man yet did show his sea,
